@@ -19,8 +19,8 @@ if command -v docker >/dev/null 2>&1; then
       echo "Adding vscode user to docker group..."
       sudo usermod -aG docker vscode || echo "Failed to add vscode user to docker group"
       
-      echo "Refreshing group membership..."
-      newgrp docker || echo "Failed to refresh group membership"
+      echo "Skipping newgrp to avoid blocking non-interactive post-create."
+      echo "Open a new terminal if docker permissions seem stale."
     else
       echo "Warning: sudo not available. Manual permission setup may be required."
       chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions without sudo"
@@ -59,8 +59,8 @@ if command -v docker >/dev/null 2>&1; then
       sudo chmod 666 /var/run/docker.sock || true
       # Add vscode user to docker group
       sudo usermod -aG docker vscode || true
-      # Refresh group membership
-      newgrp docker || true
+      # Avoid running newgrp/docker subshells because post-create is non-interactive
+      echo "If docker keeps denying access, open a new shell to refresh group membership."
     else
       echo "Note: sudo not available. If you see permission errors when using docker,"
       echo "try running: chmod 666 /var/run/docker.sock"
