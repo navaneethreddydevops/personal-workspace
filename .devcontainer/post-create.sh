@@ -2,6 +2,26 @@
 # Remove strict mode to prevent script from failing
 set -uo pipefail
 
+# Run privileged commands without hanging on sudo password prompts.
+run_privileged() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo -n true >/dev/null 2>&1; then
+      sudo "$@"
+    else
+      echo "Warning: sudo requires a password for '$*'. Skipping." >&2
+      return 1
+    fi
+  else
+    echo "Warning: sudo not available for '$*'. Skipping." >&2
+    return 1
+  fi
+}
+
 echo "Starting post-create setup..."
 
 # Set up docker permissions first
@@ -14,10 +34,10 @@ if command -v docker >/dev/null 2>&1; then
     # Ensure docker socket has correct permissions
     if command -v sudo >/dev/null 2>&1; then
       echo "Setting docker socket permissions..."
-      sudo chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions"
+      run_privileged chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions"
       
       echo "Adding vscode user to docker group..."
-      sudo usermod -aG docker vscode || echo "Failed to add vscode user to docker group"
+      run_privileged usermod -aG docker vscode || echo "Failed to add vscode user to docker group"
       
       echo "Skipping newgrp to avoid blocking non-interactive post-create."
       echo "Open a new terminal if docker permissions seem stale."
@@ -56,9 +76,9 @@ if command -v docker >/dev/null 2>&1; then
     
     # Ensure docker socket has correct permissions
     if command -v sudo >/dev/null 2>&1; then
-      sudo chmod 666 /var/run/docker.sock || true
+      run_privileged chmod 666 /var/run/docker.sock || true
       # Add vscode user to docker group
-      sudo usermod -aG docker vscode || true
+      run_privileged usermod -aG docker vscode || true
       # Avoid running newgrp/docker subshells because post-create is non-interactive
       echo "If docker keeps denying access, open a new shell to refresh group membership."
     else
