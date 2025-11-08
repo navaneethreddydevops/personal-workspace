@@ -25,7 +25,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Docker
-RUN curl -fsSL https://get.docker.com | sh
+RUN curl -fsSL https://get.docker.com | sh && \
+    usermod -aG docker vscode && \
+    newgrp docker
+
+# Ensure Docker socket has correct permissions
+RUN chmod 666 /var/run/docker.sock 2>/dev/null || true
 
 # Install KIND
 RUN curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /usr/local/bin/kind \

@@ -13,18 +13,21 @@ chmod +x "${SETUP_SCRIPT}"
 
 "${SETUP_SCRIPT}" --validate-only
 
-# If docker is present and the host socket is mounted, add the vscode user to the docker group
+# If docker is present and the host socket is mounted, set up docker permissions
 if command -v docker >/dev/null 2>&1; then
   if [ -S /var/run/docker.sock ]; then
-    echo "Docker CLI found and socket present. Ensuring 'vscode' is in the docker group..."
-    if [ "$(id -u)" -eq 0 ]; then
-      # running as root inside container
-      usermod -aG docker vscode || true
-    elif command -v sudo >/dev/null 2>&1; then
+    echo "Docker CLI found and socket present. Setting up permissions..."
+    
+    # Ensure docker socket has correct permissions
+    if command -v sudo >/dev/null 2>&1; then
+      sudo chmod 666 /var/run/docker.sock || true
+      # Add vscode user to docker group
       sudo usermod -aG docker vscode || true
+      # Refresh group membership
+      newgrp docker || true
     else
-      echo "Note: cannot add 'vscode' to 'docker' group (not running as root and sudo not available)."
-      echo "If you see permission errors when using docker, reopen the container with the Docker socket mounted and run as root: 'sudo usermod -aG docker vscode'"
+      echo "Note: sudo not available. If you see permission errors when using docker,"
+      echo "try running: chmod 666 /var/run/docker.sock"
     fi
   else
     echo "Docker CLI is installed inside the container, but /var/run/docker.sock is not present."
