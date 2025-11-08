@@ -48,7 +48,10 @@
       }
     }
   },
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "initializeCommand": {
+    "fix-docker-perms": "sudo chown root:root /var/run/docker.sock && sudo chmod 666 /var/run/docker.sock || true"
+  },
+  "postCreateCommand": "sudo chmod 666 /var/run/docker.sock && bash .devcontainer/post-create.sh",
   "portsAttributes": {
     "8000": {
       "label": "App",

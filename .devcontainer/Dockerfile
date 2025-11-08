@@ -24,13 +24,22 @@ RUN apt-get update \
     software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Docker
+# Install Docker and set up permissions
 RUN curl -fsSL https://get.docker.com | sh && \
+    groupadd -f docker && \
     usermod -aG docker vscode && \
-    newgrp docker
+    mkdir -p /var/run && \
+    touch /var/run/docker.sock && \
+    chmod 666 /var/run/docker.sock
 
-# Ensure Docker socket has correct permissions
-RUN chmod 666 /var/run/docker.sock 2>/dev/null || true
+# Add a script to fix permissions on container start
+COPY --chmod=755 <<-"EOF" /usr/local/bin/fix-docker-permissions
+#!/bin/bash
+if [ -S /var/run/docker.sock ]; then
+    chmod 666 /var/run/docker.sock
+    echo "Fixed docker socket permissions"
+fi
+EOF
 
 # Install KIND
 RUN curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /usr/local/bin/kind \
