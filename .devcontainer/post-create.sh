@@ -32,6 +32,13 @@ Options:
 EOF
 }
 
+# Ensure ~/.kube exists so kubeconfig writes don't fail
+ensure_kubeconfig_dir() {
+  local kube_dir
+  kube_dir="$(dirname "${KUBECONFIG_PATH}")"
+  mkdir -p "${kube_dir}"
+}
+
 # Run privileged commands without hanging on sudo password prompts.
 run_privileged() {
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
@@ -144,6 +151,51 @@ cluster_exists() {
   kind get clusters 2>/dev/null | grep -qw "${CLUSTER_NAME}"
 }
 
+detect_kind_api_host_port() {
+  local control_plane="kind-${CLUSTER_NAME}-control-plane"
+
+  if ! docker inspect "${control_plane}" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  docker inspect --type container \
+    -f '{{with index .NetworkSettings.Ports "6443/tcp"}}{{(index . 0).HostPort}}{{end}}' \
+    "${control_plane}" 2>/dev/null | tr -d '\n'
+}
+
+update_kind_kubeconfig() {
+  if ! cluster_exists; then
+    echo "kind cluster \"${CLUSTER_NAME}\" not found; skipping kubeconfig update."
+    return 0
+  fi
+
+  ensure_kubeconfig_dir
+
+  echo "Exporting kubeconfig for kind cluster \"${CLUSTER_NAME}\"..."
+  if ! kind export kubeconfig --name "${CLUSTER_NAME}" --kubeconfig "${KUBECONFIG_PATH}"; then
+    echo "Warning: kind kubeconfig export failed" >&2
+    return 1
+  fi
+
+  local host_port=""
+  host_port="$(detect_kind_api_host_port || true)"
+
+  if [[ -z "${host_port}" ]]; then
+    echo "Warning: Could not determine host port for kind API server; kubeconfig server may still point to localhost." >&2
+    return 1
+  fi
+
+  local server_host="${KIND_HOST_ENDPOINT:-host.docker.internal}"
+  local server_url="https://${server_host}:${host_port}"
+  echo "Updating kubeconfig server to ${server_url}"
+  if ! kubectl config set-cluster "kind-${CLUSTER_NAME}" --server "${server_url}" --kubeconfig "${KUBECONFIG_PATH}" >/dev/null; then
+    echo "Warning: Failed to update kubeconfig server URL" >&2
+    return 1
+  fi
+
+  return 0
+}
+
 create_kind_cluster() {
   if cluster_exists; then
     echo "kind cluster \"${CLUSTER_NAME}\" already exists."
@@ -172,6 +224,7 @@ main() {
   parse_args "$@"
 
   echo "Starting post-create setup..."
+  ensure_kubeconfig_dir
   configure_docker_permissions
 
   echo "Starting Kubernetes setup..."
@@ -195,6 +248,8 @@ main() {
   else
     echo "KIND_AUTO_CREATE=false; skipping kind cluster creation."
   fi
+
+  update_kind_kubeconfig
 }
 
 main "$@"

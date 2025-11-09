@@ -8,7 +8,8 @@
   "runArgs": [
     "--privileged",
     "--mount",
-    "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock"
+    "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+    "--add-host=host.docker.internal:host-gateway"
   ],
   "containerEnv": {
     "KUBECONFIG": "/home/vscode/.kube/config",
