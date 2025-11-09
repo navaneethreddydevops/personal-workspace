@@ -49,7 +49,7 @@
     }
   },
   "initializeCommand": {
-    "fix-docker-perms": "sudo chown root:root /var/run/docker.sock && sudo chmod 666 /var/run/docker.sock || true"
+    "fix-docker-perms": "bash .devcontainer/fix-docker-permissions.sh"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "portsAttributes": {
