@@ -3,10 +3,28 @@
 Workspace scaffolding for GitHub Codespaces so every session starts with the same tooling. The devcontainer bundles Docker (via docker-in-docker), Kubernetes CLI utilities (kind, kubectl, Helm), Terraform, and Python so you can go from blank repo to reproducible cloud-native workflows quickly.
 
 ## What's Included
-- `.devcontainer/` definition that installs Docker, kubectl, Helm, Terraform, and Python 3.11.
+- `.devcontainer/` definition that installs Docker plus an opinionated Kubernetes/DevOps toolbelt (kind, kubectl, Helm, Terraform, Kustomize, k9s, kubectx/kubens, Stern, Flux, Argo CD CLI, Skaffold, yq, etc.) alongside Python 3.11.
 - Custom Dockerfile that layers the official devcontainers base image with extra CLI helpers (curl, jq, make, etc.) and the `kind` binary.
-- `scripts/setup-kubernetes.sh` for creating or deleting a local kind cluster directly inside the Codespace.
+- `.devcontainer/post-create.sh` that fixes Docker socket permissions and now owns the full Kubernetes automation workflow (validation, cluster create/delete, etc.).
 - Curated VS Code extensions for Kubernetes/Helm/Docker/Terraform workflows, linting, DevOps automation, and Material-inspired themes/icons.
+
+### Tool Versions
+All CLI versions are pinned through build arguments in `.devcontainer/Dockerfile`, making upgrades a single-line change:
+
+| Tool | Build ARG | Default |
+| --- | --- | --- |
+| kind | `KIND_VERSION` | `v0.23.0` |
+| kubectl | `KUBECTL_VERSION` | `v1.28.3` |
+| Helm | `HELM_VERSION` | `v3.13.2` |
+| Terraform | `TERRAFORM_VERSION` | `1.6.3` |
+| Kustomize | `KUSTOMIZE_VERSION` | `v5.3.0` |
+| k9s | `K9S_VERSION` | `v0.32.4` |
+| kubectx/kubens | `KUBECTX_VERSION` / `KUBENS_VERSION` | `v0.9.5` |
+| Stern | `STERN_VERSION` | `v1.29.0` |
+| Skaffold | `SKAFFOLD_VERSION` | `v2.10.0` |
+| Flux CLI | `FLUX_VERSION` | `v2.3.0` |
+| Argo CD CLI | `ARGOCD_VERSION` | `v2.9.5` |
+| yq | `YQ_VERSION` | `v4.44.1` |
 
 ## How to Start
 1. **Open the repo in Codespaces**
@@ -16,23 +34,50 @@ Workspace scaffolding for GitHub Codespaces so every session starts with the sam
    - Install the **Dev Containers** extension.
    - Run `Dev Containers: Clone Repository in Container Volume...` and choose this repo, or `Dev Containers: Rebuild and Reopen in Container` if already cloned.
 3. **Bootstrap Kubernetes**
-   - After the container finishes provisioning (either via Codespaces or local devcontainer), run `./scripts/setup-kubernetes.sh` to create the default `workspace` kind cluster.
-   - To remove the cluster, run `./scripts/setup-kubernetes.sh --delete`.
+   - The post-create hook validates tooling and automatically provisions the default `workspace` kind cluster (unset by setting `KIND_AUTO_CREATE=false`).
+   - If you need to recreate or delete the cluster later, run `bash .devcontainer/post-create.sh` with the appropriate flags (see below).
 4. **Start building**
    - All required CLIs (`kubectl`, `helm`, `docker`, `terraform`, `python3`, etc.) are on PATH and ready for immediate use.
 
-## Kubernetes Helper Script
-The helper supports the following flags:
+## Testing the Devcontainer Locally
+Use the VS Code Dev Containers CLI to build and smoke-test the environment without opening a Codespace:
+
+1. **Install the CLI (once)**  
+   ```bash
+   npm install -g @devcontainers/cli
+   ```
+2. **Build and run the container**  
+   ```bash
+   DEVCONTAINER_DISABLE_LOG_TRUNCATE=true devcontainer up --workspace-folder . --log-level info > /tmp/devcontainer-test.log 2>&1
+   tail -n 40 /tmp/devcontainer-test.log
+   ```
+   - The run succeeds when the log shows `Container started` followed by `Cluster created. KUBECONFIG=/home/vscode/.kube/config`.
+   - The post-create hook automatically provisions the `workspace` kind cluster, so expect to see the usual kind status output.
+3. **Clean up when finished**  
+   ```bash
+   docker rm -f $(docker ps -aq --filter label=devcontainer.local_folder=$PWD) || true
+   docker rm -f $(docker ps -aq --filter name=workspace-control-plane) || true
+   ```
+   Remove or archive `/tmp/devcontainer-test.log` if you no longer need the build log.
+
+## Kubernetes Automation
+The `.devcontainer/post-create.sh` script now handles Docker permissions plus Kubernetes bootstrapping. By default it validates the toolchain and creates a local kind cluster (`${KIND_CLUSTER_NAME:-workspace}`) every time the devcontainer is (re)built. Tweak the behavior via environment variables:
+
+- `KIND_AUTO_CREATE` (default `true`) — set to `false` in `devcontainer.json` to skip automatic cluster creation.
+- `KIND_WAIT_SECONDS` (default `60`) — how long to wait for kind to become ready.
+- `KIND_CLUSTER_NAME` — cluster name passed through to `kind`.
+
+You can also run the script manually when you need to interact with the cluster lifecycle:
 
 ```bash
 # Validate that all CLI tools are installed (used automatically post-create)
-./scripts/setup-kubernetes.sh --validate-only
+bash .devcontainer/post-create.sh --validate-only
 
-# Create/update the cluster (default behavior)
-./scripts/setup-kubernetes.sh --wait 120
+# Force-create or refresh the cluster with a different wait time
+bash .devcontainer/post-create.sh --auto-create --wait 120
 
 # Delete the cluster
-./scripts/setup-kubernetes.sh --delete
+bash .devcontainer/post-create.sh --delete
 ```
 
 `KIND_CLUSTER_NAME` controls the cluster name (defaults to `workspace`). Override it before running the script if you need multiple clusters.

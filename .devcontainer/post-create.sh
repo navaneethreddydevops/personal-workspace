@@ -2,6 +2,36 @@
 # Remove strict mode to prevent script from failing
 set -uo pipefail
 
+CLUSTER_NAME="${KIND_CLUSTER_NAME:-workspace}"
+KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.kube/config}"
+WAIT_SECONDS="${KIND_WAIT_SECONDS:-60}"
+DELETE_CLUSTER=false
+VALIDATE_ONLY=false
+
+normalize_bool() {
+  local value="${1:-false}"
+  case "${value,,}" in
+    1|true|yes|on) echo "true" ;;
+    *) echo "false" ;;
+  esac
+}
+
+AUTO_CREATE="$(normalize_bool "${KIND_AUTO_CREATE:-true}")"
+
+usage() {
+  cat <<'EOF'
+Usage: post-create.sh [options]
+
+Options:
+  --validate-only     Check required CLIs and exit.
+  --delete            Delete the kind cluster instead of creating/updating it.
+  --wait <seconds>    Seconds to wait for kind readiness (default 60).
+  --auto-create       Force creation of the kind cluster even if KIND_AUTO_CREATE=false.
+  --no-auto-create    Skip cluster creation even if KIND_AUTO_CREATE=true.
+  -h, --help          Show this help message.
+EOF
+}
+
 # Run privileged commands without hanging on sudo password prompts.
 run_privileged() {
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
@@ -22,73 +52,149 @@ run_privileged() {
   fi
 }
 
-echo "Starting post-create setup..."
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --validate-only)
+        VALIDATE_ONLY=true
+        shift
+        ;;
+      --delete)
+        DELETE_CLUSTER=true
+        AUTO_CREATE="false"
+        shift
+        ;;
+      --wait)
+        WAIT_SECONDS="${2:-}"
+        if [[ -z "${WAIT_SECONDS}" ]]; then
+          echo "--wait requires an argument" >&2
+          exit 1
+        fi
+        shift 2
+        ;;
+      --auto-create)
+        AUTO_CREATE="true"
+        shift
+        ;;
+      --no-auto-create)
+        AUTO_CREATE="false"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        usage
+        exit 1
+        ;;
+    esac
+  done
+}
 
-# Set up docker permissions first
-if command -v docker >/dev/null 2>&1; then
+configure_docker_permissions() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Warning: Docker CLI not found in container"
+    return
+  fi
+
   echo "Docker CLI found. Setting up permissions..."
-  
-  if [ -S /var/run/docker.sock ]; then
-    echo "Docker socket found at /var/run/docker.sock"
-    
-    # Ensure docker socket has correct permissions
-    if command -v sudo >/dev/null 2>&1; then
-      echo "Setting docker socket permissions..."
-      run_privileged chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions"
-      
-      echo "Adding vscode user to docker group..."
-      run_privileged usermod -aG docker vscode || echo "Failed to add vscode user to docker group"
-      
-      echo "Skipping newgrp to avoid blocking non-interactive post-create."
-      echo "Open a new terminal if docker permissions seem stale."
-    else
-      echo "Warning: sudo not available. Manual permission setup may be required."
-      chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions without sudo"
-    fi
-    
-    # Verify permissions
-    ls -l /var/run/docker.sock
-    groups vscode
-  else
+
+  if [ ! -S /var/run/docker.sock ]; then
     echo "Warning: Docker socket not found at /var/run/docker.sock"
+    return
   fi
-else
-  echo "Warning: Docker CLI not found in container"
-fi
 
-# Continue with Kubernetes setup
-echo "Starting Kubernetes setup..."
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SETUP_SCRIPT="${ROOT_DIR}/scripts/setup-kubernetes.sh"
+  echo "Docker socket found at /var/run/docker.sock"
 
-if [[ ! -f "${SETUP_SCRIPT}" ]]; then
-  echo "Warning: ${SETUP_SCRIPT} does not exist. Skipping Kubernetes setup."
-else
-  echo "Found setup script at ${SETUP_SCRIPT}"
-  chmod +x "${SETUP_SCRIPT}"
-  "${SETUP_SCRIPT}" --validate-only || echo "Warning: Kubernetes validation failed"
-fi
+  if command -v sudo >/dev/null 2>&1; then
+    echo "Setting docker socket permissions..."
+    run_privileged chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions"
 
-# If docker is present and the host socket is mounted, set up docker permissions
-if command -v docker >/dev/null 2>&1; then
-  if [ -S /var/run/docker.sock ]; then
-    echo "Docker CLI found and socket present. Setting up permissions..."
-    
-    # Ensure docker socket has correct permissions
-    if command -v sudo >/dev/null 2>&1; then
-      run_privileged chmod 666 /var/run/docker.sock || true
-      # Add vscode user to docker group
-      run_privileged usermod -aG docker vscode || true
-      # Avoid running newgrp/docker subshells because post-create is non-interactive
-      echo "If docker keeps denying access, open a new shell to refresh group membership."
-    else
-      echo "Note: sudo not available. If you see permission errors when using docker,"
-      echo "try running: chmod 666 /var/run/docker.sock"
-    fi
+    echo "Adding vscode user to docker group..."
+    run_privileged usermod -aG docker vscode || echo "Failed to add vscode user to docker group"
+
+    echo "Skipping newgrp to avoid blocking non-interactive post-create."
+    echo "Open a new terminal if docker permissions seem stale."
   else
-    echo "Docker CLI is installed inside the container, but /var/run/docker.sock is not present."
-    echo "To use the host Docker daemon, reopen the dev container with the Docker socket mounted."
+    echo "Warning: sudo not available. Manual permission setup may be required."
+    chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions without sudo"
   fi
-else
-  echo "Docker CLI not found inside the container. The image may not have the Docker client installed."
-fi
+
+  ls -l /var/run/docker.sock
+  groups vscode
+}
+
+validate_tools() {
+  local missing=0
+  local tools=(docker kind kubectl helm terraform python3)
+
+  for tool in "${tools[@]}"; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+      echo "Missing dependency: ${tool}" >&2
+      missing=1
+    fi
+  done
+
+  return "${missing}"
+}
+
+cluster_exists() {
+  kind get clusters 2>/dev/null | grep -qw "${CLUSTER_NAME}"
+}
+
+create_kind_cluster() {
+  if cluster_exists; then
+    echo "kind cluster \"${CLUSTER_NAME}\" already exists."
+    return 0
+  fi
+
+  echo "Creating kind cluster \"${CLUSTER_NAME}\" (wait=${WAIT_SECONDS}s)..."
+  if kind create cluster --name "${CLUSTER_NAME}" --wait "${WAIT_SECONDS}s"; then
+    echo "Cluster created. KUBECONFIG=${KUBECONFIG_PATH}"
+  else
+    echo "Warning: kind cluster creation failed" >&2
+  fi
+}
+
+delete_kind_cluster() {
+  if ! cluster_exists; then
+    echo "kind cluster \"${CLUSTER_NAME}\" does not exist."
+    return 0
+  fi
+
+  echo "Deleting kind cluster \"${CLUSTER_NAME}\"..."
+  kind delete cluster --name "${CLUSTER_NAME}"
+}
+
+main() {
+  parse_args "$@"
+
+  echo "Starting post-create setup..."
+  configure_docker_permissions
+
+  echo "Starting Kubernetes setup..."
+  if ! validate_tools; then
+    echo "Warning: Kubernetes validation failed"
+    return 0
+  fi
+
+  if [[ "${VALIDATE_ONLY}" == "true" ]]; then
+    echo "All required tools are available."
+    return 0
+  fi
+
+  if [[ "${DELETE_CLUSTER}" == "true" ]]; then
+    delete_kind_cluster
+    return 0
+  fi
+
+  if [[ "${AUTO_CREATE}" == "true" ]]; then
+    create_kind_cluster
+  else
+    echo "KIND_AUTO_CREATE=false; skipping kind cluster creation."
+  fi
+}
+
+main "$@"
