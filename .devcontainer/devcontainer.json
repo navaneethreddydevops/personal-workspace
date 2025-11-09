@@ -7,8 +7,6 @@
   "remoteUser": "vscode",
   "runArgs": [
     "--privileged",
-    "--mount",
-    "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
     "--add-host=host.docker.internal:host-gateway"
   ],
   "containerEnv": {
@@ -52,7 +50,8 @@
   "initializeCommand": {
     "fix-docker-perms": "bash .devcontainer/fix-docker-permissions.sh"
   },
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postCreateCommand": "bash .devcontainer/start-docker.sh && bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/start-docker.sh",
   "portsAttributes": {
     "8000": {
       "label": "App",

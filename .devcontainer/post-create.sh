@@ -100,37 +100,23 @@ parse_args() {
   done
 }
 
-configure_docker_permissions() {
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "Warning: Docker CLI not found in container"
-    return
+ensure_docker_daemon() {
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    echo "Docker daemon is already running."
+    return 0
   fi
 
-  echo "Docker CLI found. Setting up permissions..."
-
-  if [ ! -S /var/run/docker.sock ]; then
-    echo "Warning: Docker socket not found at /var/run/docker.sock"
-    return
+  local starter_script="./.devcontainer/start-docker.sh"
+  if [[ ! -x "${starter_script}" ]]; then
+    echo "Error: ${starter_script} is missing or not executable; cannot start Docker daemon." >&2
+    return 1
   fi
 
-  echo "Docker socket found at /var/run/docker.sock"
-
-  if command -v sudo >/dev/null 2>&1; then
-    echo "Setting docker socket permissions..."
-    run_privileged chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions"
-
-    echo "Adding vscode user to docker group..."
-    run_privileged usermod -aG docker vscode || echo "Failed to add vscode user to docker group"
-
-    echo "Skipping newgrp to avoid blocking non-interactive post-create."
-    echo "Open a new terminal if docker permissions seem stale."
-  else
-    echo "Warning: sudo not available. Manual permission setup may be required."
-    chmod 666 /var/run/docker.sock || echo "Failed to set docker socket permissions without sudo"
+  echo "Starting Docker daemon inside the devcontainer..."
+  if ! bash "${starter_script}"; then
+    echo "Error: Failed to start Docker daemon." >&2
+    return 1
   fi
-
-  ls -l /var/run/docker.sock
-  groups vscode
 }
 
 validate_tools() {
@@ -151,21 +137,9 @@ cluster_exists() {
   kind get clusters 2>/dev/null | grep -qw "${CLUSTER_NAME}"
 }
 
-detect_kind_api_host_port() {
-  local control_plane="kind-${CLUSTER_NAME}-control-plane"
-
-  if ! docker inspect "${control_plane}" >/dev/null 2>&1; then
-    return 1
-  fi
-
-  docker inspect --type container \
-    -f '{{with index .NetworkSettings.Ports "6443/tcp"}}{{(index . 0).HostPort}}{{end}}' \
-    "${control_plane}" 2>/dev/null | tr -d '\n'
-}
-
-update_kind_kubeconfig() {
+export_kind_kubeconfig() {
   if ! cluster_exists; then
-    echo "kind cluster \"${CLUSTER_NAME}\" not found; skipping kubeconfig update."
+    echo "kind cluster \"${CLUSTER_NAME}\" not found; skipping kubeconfig export."
     return 0
   fi
 
@@ -176,24 +150,6 @@ update_kind_kubeconfig() {
     echo "Warning: kind kubeconfig export failed" >&2
     return 1
   fi
-
-  local host_port=""
-  host_port="$(detect_kind_api_host_port || true)"
-
-  if [[ -z "${host_port}" ]]; then
-    echo "Warning: Could not determine host port for kind API server; kubeconfig server may still point to localhost." >&2
-    return 1
-  fi
-
-  local server_host="${KIND_HOST_ENDPOINT:-host.docker.internal}"
-  local server_url="https://${server_host}:${host_port}"
-  echo "Updating kubeconfig server to ${server_url}"
-  if ! kubectl config set-cluster "kind-${CLUSTER_NAME}" --server "${server_url}" --kubeconfig "${KUBECONFIG_PATH}" >/dev/null; then
-    echo "Warning: Failed to update kubeconfig server URL" >&2
-    return 1
-  fi
-
-  return 0
 }
 
 create_kind_cluster() {
@@ -225,7 +181,7 @@ main() {
 
   echo "Starting post-create setup..."
   ensure_kubeconfig_dir
-  configure_docker_permissions
+  ensure_docker_daemon
 
   echo "Starting Kubernetes setup..."
   if ! validate_tools; then
@@ -249,7 +205,7 @@ main() {
     echo "KIND_AUTO_CREATE=false; skipping kind cluster creation."
   fi
 
-  update_kind_kubeconfig
+  export_kind_kubeconfig
 }
 
 main "$@"
