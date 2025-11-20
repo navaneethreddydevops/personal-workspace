@@ -1,11 +1,12 @@
 # personal-workspace
 
-Workspace scaffolding for GitHub Codespaces so every session starts with the same tooling. The devcontainer bundles Docker (via docker-in-docker), Kubernetes CLI utilities (kind, kubectl, Helm), Terraform, and Python so you can go from blank repo to reproducible cloud-native workflows quickly.
+Workspace scaffolding for GitHub Codespaces so every session starts with the same tooling. The devcontainer bundles Docker (via docker-in-docker), Kubernetes CLI utilities (k3d/k3s, kubectl, Helm), Terraform, and Python so you can go from blank repo to reproducible cloud-native workflows quickly.
 
 ## What's Included
-- `.devcontainer/` definition that installs Docker plus an opinionated Kubernetes/DevOps toolbelt (kind, kubectl, Helm, Terraform, Kustomize, k9s, kubectx/kubens, Stern, Flux, Argo CD CLI, Skaffold, yq, etc.) alongside Python 3.11, all running against an in-container Docker daemon.
-- Custom Dockerfile that layers the official devcontainers base image with extra CLI helpers (curl, jq, make, etc.) and the `kind` binary.
-- `.devcontainer/start-docker.sh` + `.devcontainer/post-create.sh` that bootstrap the in-container Docker daemon and own the full Kubernetes automation workflow (validation, cluster create/delete, etc.).
+- `.devcontainer/` definition that installs Docker plus an opinionated Kubernetes/DevOps toolbelt (k3d/k3s, kubectl, Helm, Terraform, Kustomize, k9s, kubectx/kubens, Stern, Flux, Argo CD CLI, Skaffold, yq, etc.) alongside Python 3.11, all running against an in-container Docker daemon.
+- Custom Dockerfile that layers the official devcontainers base image with extra CLI helpers (curl, jq, make, etc.) and the `k3d` binary.
+- k3s-in-Docker workflow via k3d, inspired by [Riaan Nolan's Kubernetes dev container guide](https://medium.com/@riaan.nolan/kubernetes-dev-container-88a777edc4b7).
+- `.devcontainer/workspace-setup.sh` that bootstraps the in-container Docker daemon and owns the full Kubernetes automation workflow (validation, cluster create/delete, etc.).
 - Curated VS Code extensions for Kubernetes/Helm/Docker/Terraform workflows, linting, DevOps automation, and Material-inspired themes/icons.
 
 ### Tool Versions
@@ -13,7 +14,7 @@ All CLI versions are pinned through build arguments in `.devcontainer/Dockerfile
 
 | Tool | Build ARG | Default |
 | --- | --- | --- |
-| kind | `KIND_VERSION` | `v0.23.0` |
+| k3d | `K3D_VERSION` | `v5.7.4` |
 | kubectl | `KUBECTL_VERSION` | `v1.28.3` |
 | Helm | `HELM_VERSION` | `v3.13.2` |
 | Terraform | `TERRAFORM_VERSION` | `1.6.3` |
@@ -34,8 +35,8 @@ All CLI versions are pinned through build arguments in `.devcontainer/Dockerfile
    - Install the **Dev Containers** extension.
    - Run `Dev Containers: Clone Repository in Container Volume...` and choose this repo, or `Dev Containers: Rebuild and Reopen in Container` if already cloned.
 3. **Bootstrap Kubernetes**
-   - The startup sequence (`start-docker.sh` + `post-create.sh`) launches a Docker daemon inside the devcontainer, validates tooling, and automatically provisions the default `workspace` kind cluster (unset by setting `KIND_AUTO_CREATE=false`).
-   - If you need to recreate or delete the cluster later, run `bash .devcontainer/post-create.sh` with the appropriate flags (see below).
+   - The startup sequence runs `bash .devcontainer/workspace-setup.sh post-create`, which launches the Docker daemon inside the devcontainer, validates tooling, and automatically provisions the default `workspace` k3s cluster via k3d (unset by setting `K3D_AUTO_CREATE=false`).
+   - Recreate, validate, or delete the cluster anytime with `bash .devcontainer/workspace-setup.sh <command>` (see below for examples).
 4. **Start building**
    - All required CLIs (`kubectl`, `helm`, `docker`, `terraform`, `python3`, etc.) are on PATH and ready for immediate use.
 
@@ -52,34 +53,34 @@ Use the VS Code Dev Containers CLI to build and smoke-test the environment witho
    tail -n 40 /tmp/devcontainer-test.log
    ```
    - The run succeeds when the log shows `Container started` followed by `Cluster created. KUBECONFIG=/home/vscode/.kube/config`.
-   - The post-create hook automatically provisions the `workspace` kind cluster, so expect to see the usual kind status output.
+   - The post-create hook automatically provisions the `workspace` k3s cluster, so expect to see k3d status output (cluster create, kubeconfig export).
 3. **Clean up when finished**  
    ```bash
    docker rm -f $(docker ps -aq --filter label=devcontainer.local_folder=$PWD) || true
    ```
-   All kind nodes live inside the devcontainer’s Docker daemon, so removing the devcontainer automatically deletes them. Remove or archive `/tmp/devcontainer-test.log` if you no longer need the build log.
+   All k3d nodes live inside the devcontainer’s Docker daemon, so removing the devcontainer automatically deletes them. Remove or archive `/tmp/devcontainer-test.log` if you no longer need the build log.
 
 ## Kubernetes Automation
-`.devcontainer/start-docker.sh` ensures the Docker daemon is running inside the container, and `.devcontainer/post-create.sh` layers the Kubernetes/bootstrap logic on top. By default the combo validates the toolchain and creates a local kind cluster (`${KIND_CLUSTER_NAME:-workspace}`) every time the devcontainer is (re)built. Tweak the behavior via environment variables:
+`.devcontainer/workspace-setup.sh` is the single entrypoint for Docker startup plus Kubernetes automation. By default it validates the toolchain and creates a local k3s cluster via k3d (`${K3D_CLUSTER_NAME:-workspace}`) every time the devcontainer is (re)built. Tweak the behavior via environment variables:
 
-- `KIND_AUTO_CREATE` (default `true`) — set to `false` in `devcontainer.json` to skip automatic cluster creation.
-- `KIND_WAIT_SECONDS` (default `60`) — how long to wait for kind to become ready.
-- `KIND_CLUSTER_NAME` — cluster name passed through to `kind`.
+- `K3D_AUTO_CREATE` (default `true`) — set to `false` in `devcontainer.json` to skip automatic cluster creation.
+- `K3D_WAIT_SECONDS` (default `60`) — how long to wait for k3d to become ready.
+- `K3D_CLUSTER_NAME` — cluster name passed through to k3d.
 
 You can also run the script manually when you need to interact with the cluster lifecycle:
 
 ```bash
 # Validate that all CLI tools are installed (used automatically post-create)
-bash .devcontainer/post-create.sh --validate-only
+bash .devcontainer/workspace-setup.sh validate
 
 # Force-create or refresh the cluster with a different wait time
-bash .devcontainer/post-create.sh --auto-create --wait 120
+bash .devcontainer/workspace-setup.sh post-create --auto-create --wait 120
 
 # Delete the cluster
-bash .devcontainer/post-create.sh --delete
+bash .devcontainer/workspace-setup.sh delete
 ```
 
-`KIND_CLUSTER_NAME` controls the cluster name (defaults to `workspace`). Override it before running the script if you need multiple clusters.
+`K3D_CLUSTER_NAME` controls the cluster name (defaults to `workspace`). Override it before running the script if you need multiple clusters.
 
 ## Customizing the Devcontainer
 - Adjust tool versions or add new ones in `.devcontainer/devcontainer.json`.

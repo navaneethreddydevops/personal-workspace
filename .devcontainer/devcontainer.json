@@ -11,7 +11,7 @@
   ],
   "containerEnv": {
     "KUBECONFIG": "/home/vscode/.kube/config",
-    "KIND_CLUSTER_NAME": "workspace"
+    "K3D_CLUSTER_NAME": "workspace"
   },
   "customizations": {
     "vscode": {
@@ -47,11 +47,9 @@
       }
     }
   },
-  "initializeCommand": {
-    "fix-docker-perms": "bash .devcontainer/fix-docker-permissions.sh"
-  },
-  "postCreateCommand": "bash .devcontainer/start-docker.sh && bash .devcontainer/post-create.sh",
-  "postStartCommand": "bash .devcontainer/start-docker.sh",
+  "initializeCommand": "bash .devcontainer/workspace-setup.sh init",
+  "postCreateCommand": "bash .devcontainer/workspace-setup.sh post-create",
+  "postStartCommand": "bash .devcontainer/workspace-setup.sh post-start",
   "portsAttributes": {
     "8000": {
       "label": "App",

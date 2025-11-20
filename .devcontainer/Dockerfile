@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 
-ARG KIND_VERSION=v0.23.0
+ARG K3D_VERSION=v5.7.4
 ARG KUBECTL_VERSION=v1.28.3
 ARG HELM_VERSION=v3.13.2
 ARG TERRAFORM_VERSION=1.6.3
@@ -51,9 +51,9 @@ if [ -S /var/run/docker.sock ]; then
 fi
 EOF
 
-# Install KIND
-RUN curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /usr/local/bin/kind \
-    && chmod +x /usr/local/bin/kind
+# Install k3d (lightweight k3s in Docker)
+RUN curl -fsSL "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64" -o /usr/local/bin/k3d \
+    && chmod +x /usr/local/bin/k3d
 
 # Install kubectl
 RUN curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl \
@@ -113,4 +113,4 @@ RUN curl -fsSL "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_V
 RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq
 
-ENV KIND_CLUSTER_NAME=workspace
+ENV K3D_CLUSTER_NAME=workspace
