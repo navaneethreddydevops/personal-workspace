@@ -14,17 +14,24 @@ ARG FLUX_VERSION=v2.3.0
 ARG ARGOCD_VERSION=v2.9.5
 ARG YQ_VERSION=v4.44.1
 
+ENV DOCKER_BUILDKIT=1 \
+    DOCKER_HOST=unix:///var/run/docker.sock \
+    DOCKER_TLS_CERTDIR="" \
+    K3D_CLUSTER_NAME=workspace
+
 # Install basic tools
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     apt-transport-https \
     ca-certificates \
     curl \
+    fuse-overlayfs \
     git \
     gnupg \
     jq \
     less \
     make \
+    sudo \
     unzip \
     vim \
     zip \
@@ -38,18 +45,7 @@ RUN apt-get update \
 RUN curl -fsSL https://get.docker.com | sh && \
     groupadd -f docker && \
     usermod -aG docker vscode && \
-    mkdir -p /var/run && \
-    touch /var/run/docker.sock && \
-    chmod 666 /var/run/docker.sock
-
-# Add a script to fix permissions on container start
-COPY --chmod=755 <<-"EOF" /usr/local/bin/fix-docker-permissions
-#!/bin/bash
-if [ -S /var/run/docker.sock ]; then
-    chmod 666 /var/run/docker.sock
-    echo "Fixed docker socket permissions"
-fi
-EOF
+    mkdir -p /var/run /var/lib/docker
 
 # Install k3d (lightweight k3s in Docker)
 RUN curl -fsSL "https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64" -o /usr/local/bin/k3d \
@@ -113,4 +109,76 @@ RUN curl -fsSL "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_V
 RUN curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq
 
-ENV K3D_CLUSTER_NAME=workspace
+VOLUME /var/lib/docker
+
+COPY --chmod=755 <<'EOF' /usr/local/bin/dind-entrypoint.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOG_FILE="${DOCKER_DAEMON_LOG:-/var/log/dockerd.log}"
+
+detect_storage_driver() {
+  if [[ -n "${DOCKER_STORAGE_DRIVER:-}" ]]; then
+    echo "${DOCKER_STORAGE_DRIVER}"
+    return
+  fi
+
+  local backing_fs
+  backing_fs="$(df -PT /var/lib/docker 2>/dev/null | awk 'NR==2 {print $2}' || true)"
+
+  if [[ "${backing_fs}" == "overlay" || "${backing_fs}" == "overlayfs" ]]; then
+    if command -v fuse-overlayfs >/dev/null 2>&1; then
+      echo "fuse-overlayfs"
+      return
+    fi
+    echo "vfs"
+    return
+  fi
+
+  if grep -qw overlay /proc/filesystems; then
+    echo "overlay2"
+  else
+    echo "vfs"
+  fi
+}
+
+start_dockerd() {
+  mkdir -p /var/run /var/log /var/lib/docker
+  : > "${LOG_FILE}"
+
+  local storage_driver
+  storage_driver="$(detect_storage_driver)"
+  local daemon_cmd=(dockerd "--host=${DOCKER_HOST}" "--storage-driver=${storage_driver}")
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    nohup "${daemon_cmd[@]}" > "${LOG_FILE}" 2>&1 &
+  elif command -v sudo >/dev/null 2>&1; then
+    nohup sudo -E "${daemon_cmd[@]}" > "${LOG_FILE}" 2>&1 &
+  else
+    echo "Docker daemon requires root or sudo" >&2
+    exit 1
+  fi
+}
+
+wait_for_docker() {
+  for _ in {1..30}; do
+    if docker info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "Docker daemon failed to start. Check ${LOG_FILE}." >&2
+  return 1
+}
+
+if ! docker info >/dev/null 2>&1; then
+  start_dockerd
+  wait_for_docker
+fi
+
+exec "$@"
+EOF
+
+ENTRYPOINT ["/usr/local/bin/dind-entrypoint.sh"]
+CMD ["sleep", "infinity"]

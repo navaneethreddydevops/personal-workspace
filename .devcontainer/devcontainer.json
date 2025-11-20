@@ -1,63 +1,58 @@
 {
-  "name": "personal-workspace",
-  "build": {
-    "dockerfile": "Dockerfile",
-    "context": ".."
-  },
+    "name": "personal-workspace",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
   "remoteUser": "vscode",
+  "overrideCommand": false,
   "runArgs": [
     "--privileged",
     "--add-host=host.docker.internal:host-gateway"
   ],
-  "containerEnv": {
-    "KUBECONFIG": "/home/vscode/.kube/config",
-    "K3D_CLUSTER_NAME": "workspace"
-  },
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "ms-vscode.makefile-tools",
-        "ms-azuretools.vscode-docker",
-        "ms-kubernetes-tools.vscode-kubernetes-tools",
-        "hashicorp.terraform",
-        "github.vscode-github-actions",
-        "ms-azure-devops.azure-pipelines",
-        "ms-python.python",
-        "dbaeumer.vscode-eslint",
-        "ms-python.vscode-pylance",
-        "redhat.vscode-yaml",
-        "esbenp.prettier-vscode",
-        "streetsidesoftware.code-spell-checker",
-        "editorconfig.editorconfig",
-        "PKief.material-icon-theme",
-        "eamodio.gitlens",
-        "github.copilot",
-        "github.copilot-chat"
-      ],
-      "settings": {
-        "files.trimTrailingWhitespace": true,
-        "terminal.integrated.defaultProfile.linux": "zsh",
-        "github.copilot.enable": {
-          "*": true,
-          "plaintext": true,
-          "markdown": true,
-          "scminput": false
-        },
-        "github.copilot.editor.enableAutoCompletions": true
-      }
+    "containerEnv": {
+        "KUBECONFIG": "/home/vscode/.kube/config",
+        "K3D_CLUSTER_NAME": "workspace"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.makefile-tools",
+                "ms-azuretools.vscode-docker",
+                "ms-kubernetes-tools.vscode-kubernetes-tools",
+                "hashicorp.terraform",
+                "github.vscode-github-actions",
+                "ms-azure-devops.azure-pipelines",
+                "ms-python.python",
+                "dbaeumer.vscode-eslint",
+                "ms-python.vscode-pylance",
+                "redhat.vscode-yaml",
+                "esbenp.prettier-vscode",
+                "streetsidesoftware.code-spell-checker",
+                "editorconfig.editorconfig",
+                "PKief.material-icon-theme"
+            ],
+            "settings": {
+                "files.trimTrailingWhitespace": true,
+                "terminal.integrated.defaultProfile.linux": "zsh",
+                "github.copilot.enable": {
+                    "*": true,
+                    "plaintext": true,
+                    "markdown": true,
+                    "scminput": false
+                },
+                "github.copilot.editor.enableAutoCompletions": true
+            }
     }
   },
-  "initializeCommand": "bash .devcontainer/workspace-setup.sh init",
-  "postCreateCommand": "bash .devcontainer/workspace-setup.sh post-create",
-  "postStartCommand": "bash .devcontainer/workspace-setup.sh post-start",
   "portsAttributes": {
     "8000": {
       "label": "App",
-      "onAutoForward": "notify"
-    },
-    "3000": {
-      "label": "Web",
-      "onAutoForward": "notify"
+            "onAutoForward": "notify"
+        },
+        "3000": {
+            "label": "Web",
+            "onAutoForward": "notify"
+        }
     }
-  }
 }
